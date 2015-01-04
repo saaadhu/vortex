@@ -17,22 +17,23 @@ func hashName(name string) string {
 
 func GetItem(name string) (io.Reader, error) {
 	key := hashName(name)
-	log.Println("Checking if %s in cache", key)
+	log.Printf("Checking if %s in cache", key)
 	return os.Open(key)
 }
 
 func WriteItem(name string, data chan byte) error {
 	key := hashName(name)
-	log.Println("Checking if %s in cache", key)
 
 	f, err := os.Create(key)
 	if err != nil {
 		return err
 	}
-	for b := range data {
-		if n, err := f.Write([]byte{b}); n != 1 {
-			return err
+	go func() {
+		for b := range data {
+			if n, err := f.Write([]byte{b}); n != 1 {
+				log.Fatal(err)
+			}
 		}
-	}
+	}()
 	return nil
 }

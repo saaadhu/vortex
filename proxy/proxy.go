@@ -1,12 +1,13 @@
 package proxy
 
 import (
-	/*	"github.com/saaadhu/vortex/proxy/cache" */
+	"github.com/saaadhu/vortex/proxy/cache"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	/* "strings" */)
+	"strings"
+)
 
 func TunnelTraffic(host string, w http.ResponseWriter) {
 	scon, err := net.Dial("tcp", host)
@@ -24,7 +25,6 @@ func TunnelTraffic(host string, w http.ResponseWriter) {
 
 	go io.Copy(scon, ccon)
 	go io.Copy(ccon, scon)
-
 }
 
 func fetchAndForward(w http.ResponseWriter, r *http.Request) {
@@ -43,29 +43,54 @@ func fetchAndForward(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 }
 
-/*
-func streamAndCache(w http.ResponseWriter, r *http.Request) {
+func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
+	c := http.Client{}
+	r.RequestURI = ""
+	resp, err := c.Do(r)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
 
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+	w.WriteHeader(resp.StatusCode)
+
+	d := make(chan byte, 1024)
+	if err := cache.WriteItem(id, d); err != nil {
+		log.Fatal(err)
+	}
+	defer close(d)
+
+	buf := make([]byte, 1024)
+
+	for {
+		n, err := resp.Body.Read(buf)
+		log.Println(n)
+		w.Write(buf[:n])
+
+		for i := 0; i < n; i = i + 1 {
+			d <- buf[i]
+		}
+
+		if err != nil {
+			break
+		}
+	}
 }
-*/
 
-func ProxyTraffic(w http.ResponseWriter, r *http.Request) {
+func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 
-	/*
-		if strings.Contains(r.RequestURI, "youtube.com/get_video") {
+	if strings.Contains(req.RequestURI, "c.youtube.com/videoplayback") {
 
-			v := r.URL.Query()
-			id := v.Get("video_id")
+		v := req.URL.Query()
+		id := v.Get("id")
 
-			r, err := cache.GetItem(id)
-			if err != nil {
-				log.Println(err)
-				streamAndCache(w, r)
-			}
-
-			log.Println(id)
-
-		} else {
-	*/
-	fetchAndForward(w, r)
+		_, err := cache.GetItem(id)
+		if err != nil {
+			streamAndCache(id, w, req)
+		}
+	} else {
+		fetchAndForward(w, req)
+	}
 }

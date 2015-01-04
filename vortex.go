@@ -8,9 +8,7 @@ import (
 
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
-	log.Println(r.Method)
 	log.Println(r.URL.String())
-	log.Println(r.URL.RawQuery)
 
 	if r.Method == "CONNECT" {
 		proxy.TunnelTraffic(r.Host, w)
