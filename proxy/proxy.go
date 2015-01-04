@@ -56,13 +56,13 @@ func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
 	w.WriteHeader(resp.StatusCode)
 
-	d := make(chan byte, 5*1024*1024)
+	d := make(chan byte, 1*1024*1024)
 	if err := cache.WriteItem(id, resp.Header, d); err != nil {
 		log.Fatal(err)
 	}
 	defer close(d)
 
-	buf := make([]byte, 5*1024*1024)
+	buf := make([]byte, 1*1024*1024)
 
 	for {
 		n, err := resp.Body.Read(buf)
@@ -84,7 +84,9 @@ func serveFromCache(hr io.Reader, r io.Reader, w http.ResponseWriter) {
 	ccon, bufrw, _ := h.Hijack()
 	defer ccon.Close()
 
+	bufrw.WriteString("HTTP/1.1 200 OK\r\n")
 	io.Copy(bufrw, hr)
+	bufrw.WriteString("\r\n")
 	io.Copy(bufrw, r)
 	bufrw.Flush()
 }
