@@ -56,13 +56,13 @@ func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
 	w.WriteHeader(resp.StatusCode)
 
-	d := make(chan byte, 1024)
-	if err := cache.WriteItem(id, d); err != nil {
+	d := make(chan byte, 5*1024*1024)
+	if err := cache.WriteItem(id, resp.Header, d); err != nil {
 		log.Fatal(err)
 	}
 	defer close(d)
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, 5*1024*1024)
 
 	for {
 		n, err := resp.Body.Read(buf)
@@ -79,6 +79,16 @@ func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func serveFromCache(hr io.Reader, r io.Reader, w http.ResponseWriter) {
+	h, _ := w.(http.Hijacker)
+	ccon, bufrw, _ := h.Hijack()
+	defer ccon.Close()
+
+	io.Copy(w, hr)
+	io.Copy(w, r)
+	bufrw.Flush()
+}
+
 func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 
 	if strings.Contains(req.RequestURI, "c.youtube.com/videoplayback") {
@@ -86,9 +96,11 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 		v := req.URL.Query()
 		id := v.Get("id")
 
-		_, err := cache.GetItem(id)
+		h, r, err := cache.GetItem(id)
 		if err != nil {
 			streamAndCache(id, w, req)
+		} else {
+			serveFromCache(h, r, w)
 		}
 	} else {
 		fetchAndForward(w, req)
