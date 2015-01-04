@@ -84,8 +84,8 @@ func serveFromCache(hr io.Reader, r io.Reader, w http.ResponseWriter) {
 	ccon, bufrw, _ := h.Hijack()
 	defer ccon.Close()
 
-	io.Copy(w, hr)
-	io.Copy(w, r)
+	io.Copy(bufrw, hr)
+	io.Copy(bufrw, r)
 	bufrw.Flush()
 }
 
