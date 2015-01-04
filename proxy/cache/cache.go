@@ -2,6 +2,7 @@ package cache
 
 import (
 	"crypto/sha1"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -11,7 +12,7 @@ func hashName(name string) string {
 	s := sha1.New()
 	io.WriteString(s, name)
 
-	return string(s.Sum(nil))
+	return fmt.Sprintf("%x", s.Sum(nil))
 }
 
 func GetItem(name string) (io.Reader, error) {
