@@ -16,31 +16,43 @@ func hashName(name string) string {
 	return fmt.Sprintf("%x", s.Sum(nil))
 }
 
-func GetItem(name string) (io.Reader, io.Reader, error) {
+var cacheDir string
+
+func Init(cd string) {
+	cacheDir = cd
+}
+
+func GetItem(name string) (io.ReadWriteCloser, io.ReadWriteCloser, error) {
 	key := hashName(name)
 	log.Printf("Checking if %s in cache", key)
-	hfr, err := os.Open(key + ".headers")
-	f, err := os.Open(key)
+	hfr, err := os.OpenFile(cacheDir+"/"+key+".headers", os.O_RDWR|os.O_APPEND, os.ModePerm)
+	f, err := os.OpenFile(cacheDir+"/"+key, os.O_RDWR|os.O_APPEND, os.ModePerm)
 	return hfr, f, err
 }
 
-func WriteItem(name string, h http.Header, data chan byte) error {
+func WriteItem(name string, h http.Header, data chan []byte) error {
 	key := hashName(name)
 
-	hf, err := os.Create(key + ".headers")
-	defer hf.Close()
-	h.Write(hf)
-
-	f, err := os.Create(key)
+	hf, f, err := GetItem(name)
 	if err != nil {
-		log.Fatal(err)
+		hf, err = os.Create(cacheDir + "/" + key + ".headers")
+
+		h.Write(hf)
+
+		f, err = os.Create(cacheDir + "/" + key)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
+	hf.Close()
+
 	go func() {
 		for b := range data {
-			if n, err := f.Write([]byte{b}); n != 1 {
+			if _, err := f.Write(b); err != nil {
 				log.Fatal(err)
 			}
 		}
+		f.Close()
 	}()
 	return nil
 }

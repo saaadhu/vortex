@@ -1,11 +1,14 @@
 package proxy
 
 import (
+	"fmt"
 	"github.com/saaadhu/vortex/proxy/cache"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -43,7 +46,7 @@ func fetchAndForward(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 }
 
-func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
+func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal int64) {
 	c := http.Client{}
 	r.RequestURI = ""
 	resp, err := c.Do(r)
@@ -51,60 +54,92 @@ func streamAndCache(id string, w http.ResponseWriter, r *http.Request) {
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
+	log.Println(resp.Header)
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
-	w.WriteHeader(resp.StatusCode)
+	buf := make([]byte, 1*8*1024)
+	// We requested a range, server does not support range requests
+	// So skip already read bytes
+	if bRead > 0 && bTotal > 0 && resp.Header.Get("Content-Range") == "" {
+		io.CopyN(ioutil.Discard, resp.Body, bRead)
+	}
 
-	d := make(chan byte, 1*1024*1024)
+	if httpw, ok := w.(http.ResponseWriter); ok {
+		httpw.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		httpw.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+		httpw.WriteHeader(resp.StatusCode)
+	}
+
+	d := make(chan []byte)
 	if err := cache.WriteItem(id, resp.Header, d); err != nil {
 		log.Fatal(err)
 	}
 	defer close(d)
 
-	buf := make([]byte, 1*1024*1024)
-
 	for {
-		n, err := resp.Body.Read(buf)
-		log.Println(n)
-		w.Write(buf[:n])
+		n, rerr := resp.Body.Read(buf)
+		rbuf := buf[:n]
 
-		for i := 0; i < n; i = i + 1 {
-			d <- buf[i]
+		dbuf := make([]byte, n)
+		copy(dbuf, rbuf)
+		d <- dbuf
+
+		if _, err := w.Write(rbuf); err != nil {
+			log.Println(err)
+			break
 		}
 
-		if err != nil {
+		if rerr != nil {
 			break
 		}
 	}
 }
 
-func serveFromCache(hr io.Reader, r io.Reader, w http.ResponseWriter) {
-	h, _ := w.(http.Hijacker)
-	ccon, bufrw, _ := h.Hijack()
-	defer ccon.Close()
+func serveFromCache(req *http.Request, hr io.Reader, r io.Reader, w http.ResponseWriter) (int64, int64, io.ReadWriter) {
+	hi, _ := w.(http.Hijacker)
+	_, bufrw, _ := hi.Hijack()
 
 	bufrw.WriteString("HTTP/1.1 200 OK\r\n")
-	io.Copy(bufrw, hr)
+	h, err := ioutil.ReadAll(hr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	hs := string(h)
+	cl := -1
+	for _, part := range strings.Split(hs, "\r\n") {
+		keyval := strings.Split(part, ":")
+		if keyval[0] == "Content-Length" {
+			cl, _ = strconv.Atoi(strings.TrimSpace(keyval[1]))
+		}
+	}
+
+	bufrw.Write(h)
 	bufrw.WriteString("\r\n")
-	io.Copy(bufrw, r)
+	n, _ := io.Copy(bufrw, r)
 	bufrw.Flush()
+
+	return int64(cl), n, bufrw
 }
 
 func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 
+	id := req.RequestURI
 	if strings.Contains(req.RequestURI, "c.youtube.com/videoplayback") {
-
 		v := req.URL.Query()
-		id := v.Get("id")
+		id = v.Get("id")
+	}
 
-		h, r, err := cache.GetItem(id)
-		if err != nil {
-			streamAndCache(id, w, req)
-		} else {
-			serveFromCache(h, r, w)
-		}
+	h, r, err := cache.GetItem(id)
+	if err != nil {
+		streamAndCache(id, w, req, -1, -1)
 	} else {
-		fetchAndForward(w, req)
+		cl, n, buf := serveFromCache(req, h, r, w)
+		h.Close()
+		r.Close()
+		if n < cl {
+			log.Printf("Requesting range %d-%d", n, cl-1)
+			req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", n, cl-1))
+			streamAndCache(id, buf, req, n, cl)
+		}
 	}
 }
