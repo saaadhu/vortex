@@ -56,6 +56,25 @@ func fetchAndForward(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 }
 
+func isCacheable(r *http.Request, respHeader http.Header) bool {
+	if r.Method != "GET" {
+		return false
+	}
+
+	cc := respHeader.Get("Cache-Control")
+	if cc == "" {
+		return true
+	}
+
+	if strings.Contains(cc, "no-cache") ||
+		strings.Contains(cc, "no-store") ||
+		strings.Contains(cc, "max-age=0") {
+		return false
+	}
+
+	return true
+}
+
 func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal int64) int64 {
 	c := http.Client{}
 	r.RequestURI = ""
@@ -81,9 +100,13 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 		httpw.WriteHeader(resp.StatusCode)
 	}
 
+	cacheable := isCacheable(r, resp.Header)
+
 	d := make(chan []byte)
-	if err := cache.WriteItem(id, resp.Header, d); err != nil {
-		log.Fatal(err)
+	if cacheable {
+		if err := cache.WriteItem(id, resp.Header, d); err != nil {
+			log.Fatal(err)
+		}
 	}
 	defer close(d)
 
@@ -92,9 +115,11 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 		br += int64(n)
 		rbuf := buf[:n]
 
-		dbuf := make([]byte, n)
-		copy(dbuf, rbuf)
-		d <- dbuf
+		if cacheable {
+			dbuf := make([]byte, n)
+			copy(dbuf, rbuf)
+			d <- dbuf
+		}
 
 		if _, err := w.Write(rbuf); err != nil {
 			log.Println(err)
@@ -145,7 +170,9 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 	}
 
 	h, r, err := cache.GetItem(id)
-	if err != nil {
+	if err != nil || req.Method == "GET" {
+		h.Close()
+		r.Close()
 		br := streamAndCache(id, w, req, -1, -1)
 		logActivity(req, br, 0)
 	} else {
