@@ -170,7 +170,7 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 	}
 
 	h, r, err := cache.GetItem(id)
-	if err != nil || req.Method == "GET" {
+	if err != nil || req.Method != "GET" {
 		h.Close()
 		r.Close()
 		br := streamAndCache(id, w, req, -1, -1)
