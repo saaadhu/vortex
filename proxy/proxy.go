@@ -12,8 +12,12 @@ import (
 	"strings"
 )
 
-func TunnelTraffic(host string, w http.ResponseWriter) {
-	scon, err := net.Dial("tcp", host)
+func logActivity(r *http.Request, bytesTotal int64, bytesFromCache int64) {
+	log.Printf("%s %s %d %d", r.Method, r.URL, bytesTotal, bytesFromCache)
+}
+
+func TunnelTraffic(r *http.Request, w http.ResponseWriter) {
+	scon, err := net.Dial("tcp", r.Host)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -26,8 +30,14 @@ func TunnelTraffic(host string, w http.ResponseWriter) {
 	h, _ := w.(http.Hijacker)
 	ccon, _, err := h.Hijack()
 
-	go io.Copy(scon, ccon)
-	go io.Copy(ccon, scon)
+	go func() {
+		io.Copy(scon, ccon)
+	}()
+
+	go func() {
+		n, _ := io.Copy(ccon, scon)
+		logActivity(r, n, 0)
+	}()
 }
 
 func fetchAndForward(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +56,7 @@ func fetchAndForward(w http.ResponseWriter, r *http.Request) {
 	bufrw.Flush()
 }
 
-func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal int64) {
+func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal int64) int64 {
 	c := http.Client{}
 	r.RequestURI = ""
 	resp, err := c.Do(r)
@@ -54,13 +64,15 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 		log.Fatal(err)
 	}
 	defer resp.Body.Close()
-	log.Println(resp.Header)
 
 	buf := make([]byte, 1*8*1024)
+	br := int64(0)
+
 	// We requested a range, server does not support range requests
 	// So skip already read bytes
 	if bRead > 0 && bTotal > 0 && resp.Header.Get("Content-Range") == "" {
-		io.CopyN(ioutil.Discard, resp.Body, bRead)
+		b, _ := io.CopyN(ioutil.Discard, resp.Body, bRead)
+		br += b
 	}
 
 	if httpw, ok := w.(http.ResponseWriter); ok {
@@ -77,6 +89,7 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 
 	for {
 		n, rerr := resp.Body.Read(buf)
+		br += int64(n)
 		rbuf := buf[:n]
 
 		dbuf := make([]byte, n)
@@ -92,6 +105,8 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 			break
 		}
 	}
+
+	return br
 }
 
 func serveFromCache(req *http.Request, hr io.Reader, r io.Reader, w http.ResponseWriter) (int64, int64, io.ReadWriter, net.Conn) {
@@ -131,7 +146,8 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 
 	h, r, err := cache.GetItem(id)
 	if err != nil {
-		streamAndCache(id, w, req, -1, -1)
+		br := streamAndCache(id, w, req, -1, -1)
+		logActivity(req, br, 0)
 	} else {
 		cl, n, buf, ccon := serveFromCache(req, h, r, w)
 		h.Close()
@@ -141,6 +157,7 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 			req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", n, cl-1))
 			streamAndCache(id, buf, req, n, cl)
 		}
+		logActivity(req, cl, n)
 		ccon.Close()
 	}
 }

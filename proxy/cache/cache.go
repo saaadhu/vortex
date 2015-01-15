@@ -24,7 +24,6 @@ func Init(cd string) {
 
 func GetItem(name string) (io.ReadWriteCloser, io.ReadWriteCloser, error) {
 	key := hashName(name)
-	log.Printf("Checking if %s in cache", key)
 	hfr, err := os.OpenFile(cacheDir+"/"+key+".headers", os.O_RDWR|os.O_APPEND, os.ModePerm)
 	f, err := os.OpenFile(cacheDir+"/"+key, os.O_RDWR|os.O_APPEND, os.ModePerm)
 	return hfr, f, err
