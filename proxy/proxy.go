@@ -94,9 +94,9 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 	}
 }
 
-func serveFromCache(req *http.Request, hr io.Reader, r io.Reader, w http.ResponseWriter) (int64, int64, io.ReadWriter) {
+func serveFromCache(req *http.Request, hr io.Reader, r io.Reader, w http.ResponseWriter) (int64, int64, io.ReadWriter, net.Conn) {
 	hi, _ := w.(http.Hijacker)
-	_, bufrw, _ := hi.Hijack()
+	ccon, bufrw, _ := hi.Hijack()
 
 	bufrw.WriteString("HTTP/1.1 200 OK\r\n")
 	h, err := ioutil.ReadAll(hr)
@@ -118,7 +118,7 @@ func serveFromCache(req *http.Request, hr io.Reader, r io.Reader, w http.Respons
 	n, _ := io.Copy(bufrw, r)
 	bufrw.Flush()
 
-	return int64(cl), n, bufrw
+	return int64(cl), n, bufrw, ccon
 }
 
 func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
@@ -133,7 +133,7 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		streamAndCache(id, w, req, -1, -1)
 	} else {
-		cl, n, buf := serveFromCache(req, h, r, w)
+		cl, n, buf, ccon := serveFromCache(req, h, r, w)
 		h.Close()
 		r.Close()
 		if n < cl {
@@ -141,5 +141,6 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 			req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", n, cl-1))
 			streamAndCache(id, buf, req, n, cl)
 		}
+		ccon.Close()
 	}
 }
