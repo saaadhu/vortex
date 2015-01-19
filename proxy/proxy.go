@@ -95,8 +95,9 @@ func streamAndCache(id string, w io.Writer, r *http.Request, bRead int64, bTotal
 	}
 
 	if httpw, ok := w.(http.ResponseWriter); ok {
-		httpw.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-		httpw.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+		for key, val := range resp.Header {
+			httpw.Header().Set(key, strings.Join(val, ","))
+		}
 		httpw.WriteHeader(resp.StatusCode)
 	}
 
@@ -171,8 +172,13 @@ func ProxyTraffic(w http.ResponseWriter, req *http.Request) {
 
 	h, r, err := cache.GetItem(id)
 	if err != nil || req.Method != "GET" {
-		h.Close()
-		r.Close()
+		if h != nil {
+			h.Close()
+		}
+		if r != nil {
+			r.Close()
+		}
+
 		br := streamAndCache(id, w, req, -1, -1)
 		logActivity(req, br, 0)
 	} else {
