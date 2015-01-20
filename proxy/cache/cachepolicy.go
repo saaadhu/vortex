@@ -34,7 +34,6 @@ func isStale(key string) bool {
 			contentType = strings.TrimSpace(keyval[1])
 		}
 	}
-	log.Println(maxAge, serverDate, contentType)
 
 	if maxAge == -1 || serverDate == "" {
 		return false
